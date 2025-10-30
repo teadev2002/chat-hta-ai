@@ -31,7 +31,7 @@ const Chatbot = () => {
     }
 
     try {
-      // Chuyển lịch sử chat thành định dạng Gemini (hỗ trợ history tốt hơn ở 2.0)
+      // Chuyển lịch sử chat thành định dạng Gemini  
       const chatHistory = newMessages.slice(0, -1).map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }],
