@@ -81,16 +81,16 @@ const Chatbot = () => {
   };
 
   return (
-    <div style={{  margin: '0 auto', padding: '10px', fontFamily: 'Arial, sans-serif' }}>
+    <div style={{  margin: '0 auto', padding: '0px', fontFamily: 'Arial, sans-serif' }}>
       <h2 style={{ textAlign: 'center', color: '#1a73e8' }}>Chatbot HTA</h2>
       
       <div
         style={{
-          height: '610px',
+          height: '600px',
           overflowY: 'auto',
           border: '1px solid #ddd',
           borderRadius: '12px',
-          padding: '6px',
+          padding: '3px',
           marginBottom: '12px',
           backgroundColor: '#f9f9f9',
         }}
