@@ -86,11 +86,11 @@ const Chatbot = () => {
       
       <div
         style={{
-          height: '620px',
+          height: '610px',
           overflowY: 'auto',
           border: '1px solid #ddd',
           borderRadius: '12px',
-          padding: '12px',
+          padding: '6px',
           marginBottom: '12px',
           backgroundColor: '#f9f9f9',
         }}
