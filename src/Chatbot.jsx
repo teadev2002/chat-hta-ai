@@ -1,19 +1,65 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import './chatbot.css'; // Import CSS
 
 const API_KEY = import.meta.env.VITE_GOOGLE_AI_API_KEY;
+const STORAGE_KEY = 'hta_chat_history';
 
 const Chatbot = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // NEW: Mobile menu
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
 
-  // Khởi tạo Gemini với model mới (stable, nhanh, miễn phí)
   const genAI = new GoogleGenerativeAI(API_KEY);
-  const model = genAI.getGenerativeModel({ 
-    model: 'gemini-2.0-flash'  // Model mới: Nhanh, 1M token context, thay thế 1.5-flash
-  });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
+  // === LOAD SESSIONS ===
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setSessions(parsed);
+      if (parsed.length > 0) {
+        const latest = parsed[0];
+        setCurrentSessionId(latest.id);
+        setMessages(latest.messages);
+      }
+    }
+  }, []);
+
+  // === AUTO SCROLL ===
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // === SAVE SESSION ===
+  const saveSession = (updatedMessages) => {
+    const now = new Date();
+    const sessionTitle = updatedMessages[0]?.content.slice(0, 20) + '...' || 'Phiên mới';
+
+    const newSession = {
+      id: currentSessionId || Date.now().toString(),
+      title: sessionTitle,
+      messages: updatedMessages,
+      timestamp: now.toISOString(),
+      preview: updatedMessages[updatedMessages.length - 1]?.content.slice(0, 40) + '...'
+    };
+
+    let updatedSessions = currentSessionId
+      ? sessions.map(s => s.id === currentSessionId ? newSession : s)
+      : [newSession, ...sessions];
+
+    setSessions(updatedSessions);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSessions));
+    if (!currentSessionId) setCurrentSessionId(newSession.id);
+  };
+
+  // === SEND MESSAGE ===
   const sendMessage = async () => {
     if (!input.trim()) return;
 
@@ -22,55 +68,77 @@ const Chatbot = () => {
     setMessages(newMessages);
     setInput('');
     setIsLoading(true);
+    saveSession(newMessages);
 
-    // Kiểm tra API key
     if (!API_KEY) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Lỗi: API key Google AI chưa được cấu hình!' }]);
+      const err = { role: 'assistant', content: 'Lỗi: API key chưa được cấu hình!' };
+      setMessages(prev => [...prev, err]);
+      saveSession([...newMessages, err]);
       setIsLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
       return;
     }
 
     try {
-      // Chuyển lịch sử chat thành định dạng Gemini  
       const chatHistory = newMessages.slice(0, -1).map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }],
       }));
 
-      // Bắt đầu chat session với config tối ưu cho 2.0 Flash
       const chat = model.startChat({
         history: chatHistory,
-        generationConfig: {
-          maxOutputTokens: 500,  // Tăng limit cho model mới (từ 200)
-          temperature: 0.7,
-          topP: 0.8,  // Thêm topP cho chất lượng tốt hơn
-        },
+        generationConfig: { maxOutputTokens: 500, temperature: 0.7, topP: 0.8 },
       });
 
-      // Gửi tin nhắn cuối
       const result = await chat.sendMessage(userMessage.content);
-      const response = await result.response;
-      const text = response.text();
+      const text = (await result.response).text();
 
       const aiMessage = { role: 'assistant', content: text };
-      setMessages(prev => [...prev, aiMessage]);
+      const finalMessages = [...newMessages, aiMessage];
+      setMessages(finalMessages);
+      saveSession(finalMessages);
     } catch (error) {
       console.error('Lỗi Google AI:', error);
-      let errMsg = 'Không thể kết nối đến Google AI.';
-      
-      // Xử lý lỗi cụ thể từ API mới
-      if (error.message.includes('quotaExceeded')) {
-        errMsg = 'Đã hết quota sử dụng miễn phí. Nâng cấp lên Google One AI Premium.';
-      } else if (error.message.includes('invalid_argument')) {
-        errMsg = 'Yêu cầu không hợp lệ. Kiểm tra input.';
-      } else {
-        errMsg = error.message;
-      }
-      
-      setMessages(prev => [...prev, { role: 'assistant', content: `Lỗi: ${errMsg}` }]);
+      let errMsg = 'Không thể kết nối đến HTA AI.';
+      if (error.message.includes('quotaExceeded')) errMsg = 'Hết quota miễn phí. Thử lại sau.';
+      else if (error.message.includes('invalid_argument')) errMsg = 'Tin nhắn không hợp lệ.';
+
+      const err = { role: 'assistant', content: `Lỗi: ${errMsg}` };
+      const finalMessages = [...newMessages, err];
+      setMessages(finalMessages);
+      saveSession(finalMessages);
     } finally {
       setIsLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 100);
+      setSidebarOpen(false); // Đóng sidebar sau khi gửi
     }
+  };
+
+  // === UTILITIES ===
+  const loadSession = (session) => {
+    setCurrentSessionId(session.id);
+    setMessages(session.messages);
+    setSidebarOpen(false); // Đóng sidebar trên mobile
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  const deleteSession = (id, e) => {
+    e.stopPropagation();
+    const filtered = sessions.filter(s => s.id !== id);
+    setSessions(filtered);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+    if (currentSessionId === id) {
+      setCurrentSessionId(null);
+      setMessages([]);
+    }
+  };
+
+  const startNewChat = () => {
+    setCurrentSessionId(null);
+    setMessages([]);
+    setInput('');
+    setSidebarOpen(false);
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   const handleKeyPress = (e) => {
@@ -80,120 +148,128 @@ const Chatbot = () => {
     }
   };
 
+  const formatTime = (iso) => {
+    const date = new Date(iso);
+    const now = new Date();
+    const diff = now - date;
+    return diff < 86400000
+      ? date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+      : date.toLocaleDateString('vi-VN');
+  };
+
   return (
-    <div style={{  margin: '0 auto', padding: '0px', fontFamily: 'Arial, sans-serif' }}>
-      <h2 style={{ textAlign: 'center', color: '#1a73e8' }}>Chatbot HTA</h2>
-      
-      <div
-        style={{
-          height: '600px',
-          overflowY: 'auto',
-          border: '1px solid #ddd',
-          borderRadius: '12px',
-          padding: '3px',
-          marginBottom: '12px',
-          backgroundColor: '#f9f9f9',
-        }}
-      >
-        {messages.length === 0 && (
-          <p style={{ color: '#888', textAlign: 'center', marginTop: '20px' }}>
-            Hãy bắt đầu cuộc trò chuyện với HTA AI
-          </p>
-        )}
-        {messages.map((msg, index) => (
-          <div
-            key={index}
-            style={{
-              marginBottom: '12px',
-              textAlign: msg.role === 'user' ? 'right' : 'left',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-            }}
-          >
-            <div
-              style={{
-                maxWidth: '80%',
-                padding: '10px 14px',
-                borderRadius: '18px',
-                backgroundColor: msg.role === 'user' ? '#1a73e8' : '#e0e0e0',
-                color: msg.role === 'user' ? 'white' : 'black',
-                wordWrap: 'break-word',
-              }}
+    <>
+      <div className="chatbot-container">
+        {/* === SIDEBAR === */}
+        <div className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+          <div className="sidebar-header">
+            <button onClick={startNewChat} className="new-chat-btn">
+              + Cuộc trò chuyện mới
+            </button>
+          </div>
+
+          <div className="session-list">
+            {sessions.length === 0 ? (
+              <p className="empty-sessions">Chưa có cuộc trò chuyện nào</p>
+            ) : (
+              sessions.map(session => (
+                <div
+                  key={session.id}
+                  onClick={() => loadSession(session)}
+                  className={`session-item ${currentSessionId === session.id ? 'active' : ''}`}
+                >
+                  <div className="session-title">{session.title}</div>
+                  <div className="session-preview">{session.preview}</div>
+                  <div className="session-time">{formatTime(session.timestamp)}</div>
+                  <button
+                    onClick={(e) => deleteSession(session.id, e)}
+                    className="delete-session-btn"
+                    title="Xóa phiên"
+                  >
+                    X
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* === MAIN CHAT === */}
+        <div className="main-chat">
+          <div className="chat-header">
+            <button 
+              className="mobile-menu-btn" 
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              aria-label="Mở menu"
             >
-              <strong>{msg.role === 'user' ? 'Bạn' : 'HTA'}:</strong>{' '}
-              <span style={{ marginLeft: '4px' }}>{msg.content}</span>
+              {sidebarOpen ? 'Close' : 'Menu'}
+            </button>
+            <h2>HTA AI Chatbot</h2>
+          </div>
+
+          <div className="messages-container">
+            {messages.length === 0 ? (
+              <p className="empty-state">
+                {currentSessionId ? 'Đang tải...' : 'Bắt đầu cuộc trò chuyện mới!'}
+              </p>
+            ) : (
+              messages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`message-wrapper ${msg.role}`}
+                >
+                  <div className={`message-bubble ${msg.role}`}>
+                    <strong className="message-label">
+                      {msg.role === 'user' ? 'Bạn' : 'HTA'}:
+                    </strong>{' '}
+                    <span>{msg.content}</span>
+                  </div>
+                </div>
+              ))
+            )}
+            {isLoading && (
+              <div className="message-wrapper assistant">
+                <div className="loading-message">
+                  HTA đang suy nghĩ<span className="loading-dots"></span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* === INPUT === */}
+          <div className="input-area">
+            <div className="input-group">
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Nhập tin nhắn..."
+                disabled={isLoading}
+                className="chat-input"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={isLoading || !input.trim()}
+                className="send-btn"
+              >
+                Gửi
+              </button>
             </div>
           </div>
-        ))}
-        {isLoading && (
-          <div style={{ textAlign: 'left' }}>
-            <div
-              style={{
-                display: 'inline-block',
-                padding: '10px 14px',
-                borderRadius: '18px',
-                backgroundColor: '#e0e0e0',
-                color: '#555',
-              }}
-            >
-              HTA đang suy nghĩ
-              <span style={{ animation: 'dots 1.5s infinite' }}>...</span>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder="Nhập tin nhắn..."
-          disabled={isLoading}
-          style={{
-            flex: 1,
-            padding: '12px',
-            fontSize: '16px',
-            border: '1px solid #ddd',
-            borderRadius: '12px',
-            outline: 'none',
-          }}
+      {/* === MOBILE OVERLAY === */}
+      {sidebarOpen && (
+        <div 
+          className="sidebar-overlay open" 
+          onClick={() => setSidebarOpen(false)}
         />
-        <button
-          onClick={sendMessage}
-          disabled={isLoading || !input.trim()}
-          style={{
-            padding: '12px 20px',
-            fontSize: '16px',
-            backgroundColor: '#1a73e8',
-            color: 'white',
-            border: 'none',
-            borderRadius: '12px',
-            cursor: isLoading || !input.trim() ? 'not-allowed' : 'pointer',
-            opacity: isLoading || !input.trim() ? 0.6 : 1,
-          }}
-        >
-          Gửi
-        </button>
-      </div>
-
-      <style>
-        {`
-          @keyframes dots {
-            0%, 20% { content: ''; }
-            40% { content: '.'; }
-            60% { content: '..'; }
-            80%, 100% { content: '...'; }
-          }
-          span[style*="animation"]::after {
-            content: '';
-            animation: dots 1.5s infinite;
-          }
-        `}
-      </style>
-    </div>
+      )}
+    </>
   );
 };
 
