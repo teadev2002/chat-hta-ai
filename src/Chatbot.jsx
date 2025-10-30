@@ -137,7 +137,7 @@ const Chatbot = () => {
                 color: '#555',
               }}
             >
-              Gemini đang suy nghĩ
+              HTA đang suy nghĩ
               <span style={{ animation: 'dots 1.5s infinite' }}>...</span>
             </div>
           </div>
